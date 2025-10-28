@@ -2,7 +2,7 @@
 
 import streamlit as st
 import pandas as pd
-from backend import PropertyChatbot
+from backend.backend import PropertyChatbot
 
 # Page configuration
 st.set_page_config(
@@ -368,5 +368,6 @@ st.markdown(
     '<div class="footer">💻 Built by Shivansh Shrivastava for NoBrokerage.com</div>',
     unsafe_allow_html=True
 )
+
 
 
