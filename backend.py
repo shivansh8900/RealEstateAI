@@ -1,4 +1,4 @@
-%%writefile backend.py
+
 
 import pandas as pd
 import re
@@ -220,3 +220,4 @@ class PropertyChatbot:
         results = self.filter_properties(filters)
         summary = self.generate_summary(results, filters)
         return summary, results, filters
+
