@@ -1,10 +1,6 @@
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from backend.backend import PropertyChatbot
 import streamlit as st
 import pandas as pd
+from backend import PropertyChatbot
 
 
 # Page configuration
@@ -371,6 +367,7 @@ st.markdown(
     '<div class="footer">💻 Built by Shivansh Shrivastava for NoBrokerage.com</div>',
     unsafe_allow_html=True
 )
+
 
 
 
