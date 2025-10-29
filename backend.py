@@ -12,32 +12,43 @@ class PropertyChatbot:
         }
         self.available_cities = list(self.city_mapping.keys())
 
-    def load_data(self, project_csv: str, address_csv: str, config_csv: str, variant_csv: str):
-        """Load and merge all CSV files."""
-        project = pd.read_csv(project_csv)
-        address = pd.read_csv(address_csv)
-        config = pd.read_csv(config_csv)
-        variant = pd.read_csv(variant_csv)
+   def load_data(self, project_csv: str, address_csv: str, config_csv: str, variant_csv: str):
+    """Load and merge all CSV files, filtering out test data."""
+    project = pd.read_csv(project_csv)
+    address = pd.read_csv(address_csv)
+    config = pd.read_csv(config_csv)
+    variant = pd.read_csv(variant_csv)
 
-        merged = project.merge(address, left_on='id', right_on='projectId',
-                              how='left', suffixes=('_project', '_address'))
-        merged = merged.merge(config, left_on='id_project', right_on='projectId',
-                            how='left', suffixes=('', '_config'))
-        merged = merged.merge(variant, left_on='id', right_on='configurationId', how='left')
+    # 🧹 FILTER OUT TEST DATA (before merging)
+    test_keywords = ['test', 'testing', 'dummy', 'igi', 'sample', '999']
+    for keyword in test_keywords:
+        project = project[~project['projectName'].str.contains(keyword, case=False, na=False)]
+    
+    # Filter by bad addresses too
+    bad_addr_projects = address[
+        address['fullAddress'].str.contains('address|landmark|asdfgh|awsedr', case=False, na=False)
+    ]['projectId'].tolist()
+    project = project[~project['id'].isin(bad_addr_projects)]
 
-        merged = merged.rename(columns={
-            'cityId': 'city',
-            'customBHK': 'bhk',
-            'fullAddress': 'address',
-            'projectName': 'name',
-            'price': 'price_inr'
-        })
+    merged = project.merge(address, left_on='id', right_on='projectId',
+                          how='left', suffixes=('_project', '_address'))
+    merged = merged.merge(config, left_on='id_project', right_on='projectId',
+                        how='left', suffixes=('', '_config'))
+    merged = merged.merge(variant, left_on='id', right_on='configurationId', how='left')
 
-        # Extract locality from CSV addresses ONLY
-        merged['locality'] = merged['address'].apply(self.extract_locality)
+    merged = merged.rename(columns={
+        'cityId': 'city',
+        'customBHK': 'bhk',
+        'fullAddress': 'address',
+        'projectName': 'name',
+        'price': 'price_inr'
+    })
 
-        self.df = merged
-        print(f"✅ Data loaded: {merged.shape[0]} records")
+    # Extract locality from CSV addresses ONLY
+    merged['locality'] = merged['address'].apply(self.extract_locality)
+
+    self.df = merged
+    print(f"✅ Data loaded: {merged.shape[0]} records (test data filtered)")
 
     def extract_locality(self, address):
         """Extract locality from address using ONLY CSV data - NO hardcoded lists."""
@@ -275,3 +286,4 @@ class PropertyChatbot:
         final_results = results if not results.empty else (expanded_results if expanded_results is not None else pd.DataFrame())
         
         return summary, final_results, filters
+
