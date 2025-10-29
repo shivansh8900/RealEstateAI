@@ -241,7 +241,7 @@ with st.sidebar:
     st.markdown("🏢 NoBrokerage.com")
 
 def display_properties(df):
-    """Display property cards with view details button."""
+    """Display property cards with CLEAN City - Locality format."""
     if df.empty:
         st.info("No properties found matching your criteria.")
         return
@@ -259,13 +259,17 @@ def display_properties(df):
         status_class = "status-ready" if "READY" in status else "status-construction"
         status_display = status.replace("_", " ").title()
 
-        # Get property details
+        # Get property details FROM CSV
         prop_name = str(row.get('name', 'Property'))
         bhk_type = str(row.get('bhk', 'N/A'))
-        address = str(row.get('address', 'Address not available'))[:80]
         slug = str(row.get('slug', 'property'))
+        
+        # FIXED: Use clean City - Locality format
+        locality = str(row.get('locality', 'Unknown'))
+        city_id = row.get('city', '')
+        city_name = "Mumbai" if city_id == "cmf50r5a00000vcj0k1iuocuu" else "Pune" if city_id == "cmf6nu3ru000gvcxspxarll3v" else "Unknown"
 
-        # Property card HTML
+        # Property card HTML with CLEAN location
         card_html = f"""
         <div class="property-card">
             <div class="property-title">🏢 {prop_name}</div>
@@ -273,22 +277,23 @@ def display_properties(df):
             <div style="margin: 15px 0;">
                 <span class="property-detail"><strong>{bhk_type}</strong></span>
                 <span class="property-detail {status_class}">{status_display}</span>
+                <span class="property-detail">📍 {city_name} - {locality}</span>
             </div>
-            <div class="property-detail" style="display: block; background: transparent !important;">
-                📍 {address}
-            </div>
+            <a href="/project/{slug}" style="
+                background: #FF6B35;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 8px;
+                text-decoration: none;
+                display: inline-block;
+                margin-top: 10px;
+                font-size: 14px;
+            ">
+                🔗 View Full Details
+            </a>
         </div>
         """
         st.markdown(card_html, unsafe_allow_html=True)
-
-        # Add View Details button
-        col1, col2, col3 = st.columns([1, 1, 2])
-        with col1:
-            if st.button("📋 View Details", key=f"view_{idx}_{row.get('id_project', idx)}"):
-                st.info(f"🔗 Project URL: /project/{slug}")
-        with col2:
-            if st.button("⭐ Save", key=f"save_{idx}_{row.get('id_project', idx)}"):
-                st.success("Property saved to favorites!")
 
 # Display chat messages
 for message in st.session_state.messages:
@@ -367,8 +372,3 @@ st.markdown(
     '<div class="footer">💻 Built by Shivansh Shrivastava for NoBrokerage.com</div>',
     unsafe_allow_html=True
 )
-
-
-
-
-
