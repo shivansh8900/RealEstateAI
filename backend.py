@@ -19,10 +19,8 @@ class PropertyChatbot:
         config = pd.read_csv(config_csv)
         variant = pd.read_csv(variant_csv)
 
-        # 🧹 FILTER OUT TEST DATA (before merging)
+        # 🧹 Filter test data
         print("🧹 Filtering test data...")
-        
-        # Remove test projects by name
         test_keywords = ['test', 'testing', 'dummy', 'igi', 'sample', '999', 'testring']
         for keyword in test_keywords:
             before = len(project)
@@ -31,21 +29,18 @@ class PropertyChatbot:
             if removed > 0:
                 print(f"   Removed {removed} projects with '{keyword}' in name")
         
-        # Remove projects with fake addresses
-        print("🧹 Filtering fake addresses...")
+        # Filter fake addresses
         bad_patterns = ['address', 'landmark', 'asdfgh', 'awsedr', 'sdfgh', 'esrdfgh']
         bad_project_ids = []
-        
         for pattern in bad_patterns:
             bad_addrs = address[
                 address['fullAddress'].str.contains(pattern, case=False, na=False)
             ]['projectId'].tolist()
             bad_project_ids.extend(bad_addrs)
         
-        bad_project_ids = list(set(bad_project_ids))  # Remove duplicates
         if bad_project_ids:
             before = len(project)
-            project = project[~project['id'].isin(bad_project_ids)]
+            project = project[~project['id'].isin(list(set(bad_project_ids)))]
             removed = before - len(project)
             print(f"   Removed {removed} projects with fake addresses")
 
@@ -64,55 +59,35 @@ class PropertyChatbot:
             'price': 'price_inr'
         })
 
-        # Clean price data
+        # Clean data
         merged['price_inr'] = pd.to_numeric(merged['price_inr'], errors='coerce')
-        merged = merged[merged['price_inr'] <= 1000000000]  # Remove outliers
-        merged = merged.dropna(subset=['price_inr'])  # Remove missing prices
-
-        # Clean BHK data
+        merged = merged[merged['price_inr'] <= 1000000000]
+        merged = merged.dropna(subset=['price_inr'])
         merged['bhk'] = merged['bhk'].fillna('').astype(str).str.strip().str.upper()
         merged['bhk'] = merged['bhk'].replace('', 'NOT_SPECIFIED')
-
-        # Extract locality from CSV addresses
         merged['locality'] = merged['address'].apply(self.extract_locality)
 
         self.df = merged
-        print(f"✅ Data loaded: {merged.shape[0]} records (test data filtered)")
-        print(f"💰 Price range: {self.format_price(merged['price_inr'].min())} - {self.format_price(merged['price_inr'].max())}")
+        print(f"✅ Data loaded: {merged.shape[0]} records")
 
     def extract_locality(self, address):
-        """Extract locality from address using ONLY CSV data."""
+        """Extract locality from address."""
         if pd.isna(address) or address == '':
             return "Unknown"
         
         address_str = str(address).strip()
         parts = address_str.split(',')
         
-        # Try to find the best locality part
         for part in reversed(parts):
             part_clean = part.strip()
             
             if len(part_clean) < 3 or len(part_clean) > 50:
                 continue
             
-            # Skip parts that are clearly not localities
             skip_patterns = [
-                r'\d{6}',  # Pincode
-                r'\d{3,}',  # Plot/building numbers
-                'maharashtra',
-                'mumbai',
-                'pune',
-                'near',
-                'road',
-                r'\brd\b',
-                r'^sr\s',
-                'plot',
-                'building',
-                'project',
-                'cts',
-                'opposite',
-                'beside',
-                'no\.',
+                r'\d{6}', r'\d{3,}', 'maharashtra', 'mumbai', 'pune',
+                'near', 'road', r'\brd\b', r'^sr\s', 'plot', 'building',
+                'project', 'cts', 'opposite', 'beside', 'no\.'
             ]
             
             skip = False
@@ -124,7 +99,6 @@ class PropertyChatbot:
             if not skip:
                 return part_clean[:40]
         
-        # Fallback to first meaningful part
         for part in parts:
             clean = part.strip()
             if len(clean) > 3 and not re.search(r'\d{6}', clean):
@@ -145,6 +119,10 @@ class PropertyChatbot:
     def parse_query(self, query: str) -> Dict:
         """Extract filters from natural language query."""
         query_lower = query.lower()
+        
+        # Remove currency symbols that might interfere
+        query_lower = query_lower.replace('₹', '').replace('rs.', '').replace('rs', '')
+        
         filters = {
             "bhk": None,
             "city": None,
@@ -161,7 +139,7 @@ class PropertyChatbot:
                 filters["project_name"] = str(project)
                 break
 
-        # BHK
+        # BHK - Multiple patterns
         bhk_patterns = [r'(\d+)\s*bhk', r'(\d+)\s*bed', r'(\d+)\s*bedroom', r'(\d+)bhk']
         for pattern in bhk_patterns:
             match = re.search(pattern, query_lower)
@@ -186,30 +164,37 @@ class PropertyChatbot:
                 filters["locality"] = loc
                 break
 
-        # Budget
-        match_budget_range = re.search(
-            r'(?:between\s+)?(\d+(?:\.\d+)?)\s*(?:to|-|and)\s*(\d+(?:\.\d+)?)\s*(l|cr|lakh|crore)',
-            query_lower
-        )
-        match_budget_single = re.search(
-            r'(?:under|below|less than|upto|up to|within)\s+(\d+(?:\.\d+)?)\s*(l|cr|lakh|crore)',
-            query_lower
-        )
-
+        # Budget parsing - FIXED with better patterns
         def to_inr(amount, unit):
+            """Convert amount to INR."""
             unit = unit.lower()
-            if unit.startswith('l'):
+            if 'l' in unit:  # lakh
                 return float(amount) * 100000
-            elif unit.startswith('cr'):
+            elif 'cr' in unit or 'crore' in unit:
                 return float(amount) * 10000000
             return float(amount)
+
+        # Try range first: "between 1 cr and 3 cr" or "1-3 cr"
+        match_budget_range = re.search(
+            r'(?:between\s+)?(\d+(?:\.\d+)?)\s*(?:to|-|and)\s*(\d+(?:\.\d+)?)\s*(l(?:akh)?|cr(?:ore)?)',
+            query_lower
+        )
+        
+        # Then single: "under 1.2 cr"
+        match_budget_single = re.search(
+            r'(?:under|below|less\s+than|upto|up\s+to|within)\s+(\d+(?:\.\d+)?)\s*(l(?:akh)?|cr(?:ore)?)',
+            query_lower
+        )
 
         if match_budget_range:
             low = to_inr(match_budget_range.group(1), match_budget_range.group(3))
             high = to_inr(match_budget_range.group(2), match_budget_range.group(3))
             filters["budget"] = (low, high)
+            print(f"🔍 Budget range parsed: {low} - {high}")
         elif match_budget_single:
-            filters["budget"] = to_inr(match_budget_single.group(1), match_budget_single.group(2))
+            budget_value = to_inr(match_budget_single.group(1), match_budget_single.group(2))
+            filters["budget"] = budget_value
+            print(f"🔍 Budget max parsed: {budget_value} (₹{budget_value/10000000:.2f} Cr)")
 
         # Status
         if any(word in query_lower for word in ["ready", "ready to move", "immediate possession"]):
@@ -222,10 +207,13 @@ class PropertyChatbot:
     def filter_properties(self, filters: Dict, expanded: bool = False) -> pd.DataFrame:
         """Filter properties based on extracted filters."""
         df = self.df.copy()
+        
+        print(f"\n🔎 Starting filter with {len(df)} properties")
 
         if filters["city"] and not self.is_city_available(filters["city"]):
             return pd.DataFrame()
 
+        # Clean columns
         if 'city' in df.columns:
             df["city"] = df["city"].astype(str).str.strip()
         if 'bhk' in df.columns:
@@ -238,39 +226,51 @@ class PropertyChatbot:
         # Project name filter
         if filters["project_name"]:
             filtered = filtered[filtered["name"].str.lower() == filters["project_name"].lower()]
+            print(f"   After project filter: {len(filtered)} properties")
 
         # City filter
         city_ids = self.get_city_ids(filters["city"])
         if city_ids and 'city' in filtered.columns:
             filtered = filtered[filtered["city"].isin(city_ids)]
+            print(f"   After city filter: {len(filtered)} properties")
 
         # BHK filter
         if filters["bhk"] and 'bhk' in filtered.columns:
             filtered = filtered[filtered["bhk"] == filters["bhk"].upper()]
+            print(f"   After BHK filter: {len(filtered)} properties")
 
-        # Budget filter
+        # Budget filter - CRITICAL FIX
         if 'price_inr' in filtered.columns:
             filtered = filtered.dropna(subset=['price_inr'])
             filtered = filtered[filtered['price_inr'] > 0]
 
             if isinstance(filters["budget"], tuple):
                 low, high = filters["budget"]
+                before = len(filtered)
                 filtered = filtered[(filtered["price_inr"] >= low) & (filtered["price_inr"] <= high)]
+                print(f"   After budget range filter ({low}-{high}): {len(filtered)} properties (removed {before - len(filtered)})")
             elif isinstance(filters["budget"], (int, float)):
+                before = len(filtered)
                 filtered = filtered[filtered["price_inr"] <= filters["budget"]]
+                print(f"   After budget max filter (<={filters['budget']}): {len(filtered)} properties (removed {before - len(filtered)})")
 
-        # Status filter (skip if expanded search)
+        # Status filter
         if filters["status"] and 'status' in filtered.columns and not expanded:
+            before = len(filtered)
             filtered = filtered[filtered["status"].str.contains(filters["status"], na=False)]
+            print(f"   After status filter: {len(filtered)} properties (removed {before - len(filtered)})")
 
-        # Locality filter (skip if expanded search)
+        # Locality filter
         if filters["locality"] and 'address' in filtered.columns and not expanded:
+            before = len(filtered)
             filtered = filtered[filtered["address"].str.lower().str.contains(filters["locality"], na=False)]
+            print(f"   After locality filter: {len(filtered)} properties (removed {before - len(filtered)})")
 
         # Sort by price
         if 'price_inr' in filtered.columns and not filtered.empty:
             filtered = filtered.sort_values('price_inr')
 
+        print(f"✅ Final result: {len(filtered)} properties\n")
         return filtered.head(10)
 
     def format_price(self, price: float) -> str:
@@ -299,7 +299,7 @@ class PropertyChatbot:
 
         if requested_city and not self.is_city_available(requested_city):
             available_cities_str = ", ".join([c.capitalize() for c in self.available_cities])
-            return f"⚠️ Sorry, we don't have property listings for **{requested_city}**. Available: **{available_cities_str}**."
+            return f"⚠️ Sorry, we don't have listings for **{requested_city}**. Available: **{available_cities_str}**."
 
         budget_str = ""
         if isinstance(budget, tuple):
@@ -309,7 +309,7 @@ class PropertyChatbot:
 
         city_display = requested_city if requested_city else "Mumbai & Pune"
 
-        # No results case
+        # No results
         if results.empty:
             if expanded_results is not None and not expanded_results.empty:
                 count = len(expanded_results)
@@ -317,13 +317,11 @@ class PropertyChatbot:
                 localities = [loc for loc in localities if loc.lower() != "unknown"]
                 locality_str = " and ".join(localities[:2]) if len(localities) >= 2 else localities[0] if localities else "nearby areas"
                 
-                locality_msg = f" in {requested_locality}" if requested_locality else ""
-                return f"❌ No {bhk} {status} properties found{locality_msg} {budget_str}. Expanding to **{locality_str}** found **{count} options**."
+                return f"❌ No {bhk} {status} found {budget_str}. Expanded to **{locality_str}**: **{count} options**."
             
-            locality_msg = f" in {requested_locality}" if requested_locality else ""
-            return f"❌ No {bhk} {status} properties found{locality_msg} {budget_str} in {city_display}."
+            return f"❌ No {bhk} {status} properties {budget_str} in {city_display}."
 
-        # Success case - ALL from CSV
+        # Success
         count = len(results)
         localities = results['locality'].value_counts().head(3).index.tolist()
         localities = [loc for loc in localities if loc.lower() != "unknown"]
@@ -339,10 +337,10 @@ class PropertyChatbot:
         construction_count = status_counts.get('UNDER_CONSTRUCTION', 0)
 
         summary = f"✅ Found **{count} {bhk}** properties in **{city_display}** {budget_str}. "
-        summary += f"Located near **{locality_str}**, prices from {self.format_price(min_price)} to {self.format_price(max_price)}. "
+        summary += f"Located near **{locality_str}**, prices {self.format_price(min_price)} to {self.format_price(max_price)}. "
         
         if ready_count > 0 and construction_count > 0:
-            summary += f"**{ready_count} ready-to-move**, **{construction_count} under construction**. "
+            summary += f"**{ready_count} ready**, **{construction_count} under construction**. "
         elif ready_count > 0:
             summary += f"All **{ready_count} ready** for possession. "
         elif construction_count > 0:
@@ -353,7 +351,7 @@ class PropertyChatbot:
         return summary
 
     def process_query(self, query: str) -> Tuple[str, pd.DataFrame, Dict]:
-        """Process user query and return results."""
+        """Process user query."""
         filters = self.parse_query(query)
         results = self.filter_properties(filters, expanded=False)
         
